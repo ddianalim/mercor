@@ -47,6 +47,16 @@ const candidateSchema = new mongoose.Schema({
   selected: {
     type: Boolean,
     default: false
+  },
+  scores: {
+    relevant_skills: Number,    // 35%
+    work_experience: Number,    // 25%
+    work_diversity: Number,     // 15%
+    education: Number,          // 10%
+    salary_fit: Number,        // 10%
+    location_diversity: Number, // 5%
+    total: Number,
+    llm_analysis: String       // Store LLM insights
   }
 });
 
