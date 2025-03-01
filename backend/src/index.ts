@@ -3,6 +3,8 @@ import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import Candidate from './models/Candidate';
+import { calculateCandidateScore } from './services/scoring';
+import { CandidateDocument } from './types/candidate';
 
 dotenv.config();
 
@@ -33,9 +35,22 @@ app.get('/api/candidates', async (req, res) => {
       query = { ...query, location };
     }
     
-    const candidates = await Candidate.find(query);
-    res.json(candidates);
+    const selectedCandidates = await Candidate.find({ selected: true }).lean();
+    const candidates = await Candidate.find(query).lean();
+    
+    const scoredCandidates = await Promise.all(candidates.map(async (candidate) => {
+      const scores = await calculateCandidateScore(candidate as any, selectedCandidates);
+      return {
+        ...candidate,
+        scores
+      };
+    }));
+    
+    res.json(scoredCandidates.sort((a, b) => 
+      (b.scores?.total || 0) - (a.scores?.total || 0)
+    ));
   } catch (error) {
+    console.error('Error:', error);
     res.status(500).json({ error: 'Failed to fetch candidates' });
   }
 });
@@ -71,10 +86,12 @@ const PORT = process.env.PORT || 3001;
 
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/mercor')
   .then(() => {
+    console.log('Connected to MongoDB');
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
   })
   .catch((error) => {
-    console.error('Database connection failed:', error);
+    console.error('MongoDB connection failed:', error);
+    process.exit(1);
   });

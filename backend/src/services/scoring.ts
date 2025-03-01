@@ -1,4 +1,9 @@
-import { Candidate } from '../models/Candidate';
+import mongoose from 'mongoose';
+import axios from 'axios';
+import dotenv from 'dotenv';
+import { CandidateDocument } from '../types/candidate';
+
+dotenv.config();
 
 const STARTUP_TECH_SKILLS = [
   // Frontend
@@ -47,43 +52,72 @@ const LOCATION_PREFERENCES = {
   TERTIARY: ['India', 'Singapore', 'Germany', 'Netherlands'] // Tech hubs
 };
 
-export function calculateCandidateScore(candidate: any) {
-  const scores = {
-    relevant_skills: calculateSkillsScore(candidate.skills),         // 35%
-    work_experience: calculateExperienceScore(candidate.work_experiences), // 25%
-    work_diversity: calculateWorkDiversityScore(candidate.work_experiences), // 15%
-    education: calculateEducationScore(candidate.education),         // 10%
-    salary_fit: calculateSalaryFitScore(candidate.annual_salary_expectation, candidate.work_experiences), // 10%
-    location_diversity: calculateLocationScore(candidate.location),   // 5%
-  };
-
-  return {
-    ...scores,
-    total: (
-      scores.relevant_skills * 0.35 +
-      scores.work_experience * 0.25 +
-      scores.work_diversity * 0.15 +
-      scores.education * 0.10 +
-      scores.salary_fit * 0.10 +
-      scores.location_diversity * 0.05
-    ) * 100
-  };
+interface GroqResponse {
+  choices: Array<{
+    message: {
+      content: string;
+    };
+  }>;
 }
 
-export async function scoreCandidate(candidate) {
+interface Degree {
+  degree: string;
+  subject: string;
+  isTop25?: boolean;
+  isTop50?: boolean;
+}
+
+interface Education {
+  degrees: Degree[];
+}
+
+interface WorkExperience {
+  company: string;
+  roleName: string;
+}
+
+interface SalaryExpectation {
+  full_time?: string;
+}
+
+const DEGREE_SCORES: Record<string, number> = {
+  'PhD': 1.0,
+  'Master\'s Degree': 0.8,
+  'Bachelor\'s Degree': 0.6,
+  'Associate\'s Degree': 0.4
+};
+
+export async function calculateCandidateScore(
+  candidate: any,
+  selectedCandidates: any[] = []
+): Promise<{
+  relevant_skills: number;
+  work_experience: number;
+  work_diversity: number;
+  education: number;
+  salary_fit: number;
+  location_diversity: number;
+  total: number;
+}> {
   const scores = {
-    relevant_skills: calculateSkillsScore(candidate.skills),
-    work_experience: calculateExperienceScore(candidate.work_experiences),
-    work_diversity: calculateWorkDiversityScore(candidate.work_experiences),
+    relevant_skills: calculateSkillsScore(candidate.skills || []),
+    work_experience: calculateExperienceScore(candidate.work_experiences || []),
+    work_diversity: calculateWorkDiversityScore(candidate.work_experiences || []),
     education: calculateEducationScore(candidate.education),
-    salary_fit: calculateSalaryFitScore(candidate.annual_salary_expectation, candidate.work_experiences),
-    location_diversity: calculateLocationScore(candidate.location)
+    salary_fit: calculateSalaryFitScore(candidate.annual_salary_expectation, candidate.work_experiences || []),
+    location_diversity: calculateLocationScore(candidate.location || '', selectedCandidates)
   };
-  
-  scores.total = weightedTotal(scores);
-  scores.llm_analysis = await getLLMAnalysis(candidate);
-  
-  return scores;
+
+  const total = (
+    scores.relevant_skills * 0.35 +
+    scores.work_experience * 0.25 +
+    scores.work_diversity * 0.15 +
+    scores.education * 0.10 +
+    scores.salary_fit * 0.10 +
+    scores.location_diversity * 0.05
+  ) * 100;
+
+  return { ...scores, total };
 }
 
 function calculateSkillsScore(skills: string[]): number {
@@ -104,7 +138,7 @@ function calculateSkillsScore(skills: string[]): number {
   return techScore + domainScore;
 }
 
-function calculateExperienceScore(experiences: any[]): number {
+function calculateExperienceScore(experiences: WorkExperience[]): number {
   // Leadership Score (40% of experience score)
   const leadershipScore = experiences.some(exp => 
     LEADERSHIP_KEYWORDS.some(keyword => 
@@ -149,45 +183,17 @@ function calculateWorkDiversityScore(experiences: any[]): number {
   return Math.min(uniqueCategories.size / 3, 1);
 }
 
-function calculateEducationScore(education: any): number {
-  if (!education || !education.degrees || education.degrees.length === 0) {
-    return 0;
-  }
-
-  // Degree Level Score (35%)
-  const degreeScores = {
-    "PhD": 1,
-    "Master's Degree": 0.8,
-    "Bachelor's Degree": 0.6,
-    "Associate's Degree": 0.4
-  };
-  const highestDegreeScore = Math.max(...education.degrees.map(
-    deg => degreeScores[deg.degree] || 0
-  )) * 0.35;
-
-  // Relevant Subject Score (35%)
-  const relevantSubjects = [
-    'computer science', 'software engineering', 'data science',
-    'information technology', 'electrical engineering', 'computer engineering'
-  ];
-  const hasRelevantSubject = education.degrees.some(
-    deg => relevantSubjects.some(subject => 
-      deg.subject.toLowerCase().includes(subject.toLowerCase())
-    )
+function calculateEducationScore(education: Education): number {
+  if (!education?.degrees?.length) return 0;
+  
+  const degreeScores = education.degrees.map(
+    deg => DEGREE_SCORES[deg.degree as keyof typeof DEGREE_SCORES] || 0
   );
-  const subjectScore = hasRelevantSubject ? 0.35 : 0;
-
-  // School Ranking Score (30%)
-  const schoolScore = education.degrees.reduce((score, deg) => {
-    if (deg.isTop25) return 0.30;  // Top 25 school
-    if (deg.isTop50) return 0.20;  // Top 50 school
-    return score;
-  }, 0);
-
-  return highestDegreeScore + subjectScore + schoolScore;
+  
+  return Math.max(...degreeScores);
 }
 
-function calculateSalaryFitScore(salaryExpectation: any, workExperiences: any[]): number {
+function calculateSalaryFitScore(salaryExpectation: SalaryExpectation, workExperiences: WorkExperience[]): number {
   if (!salaryExpectation?.full_time) return 0;
   
   // Clean the salary string and convert to number
@@ -223,7 +229,10 @@ function calculateSalaryFitScore(salaryExpectation: any, workExperiences: any[])
   return 0;
 }
 
-function calculateLocationScore(location: string, selectedCandidates: Candidate[] = []): number {
+function calculateLocationScore(
+  location: string | null,
+  selectedCandidates: Record<string, any>[] = []
+): number {
   if (!location) return 0;
   
   // Check if we need a US candidate
@@ -253,20 +262,38 @@ Analyze this candidate for a startup:
 Candidate data:
 `;
 
-export async function getLLMAnalysis(candidate: any, selectedCandidates: Candidate[] = []) {
+export async function getLLMAnalysis(
+  candidate: CandidateDocument, 
+  selectedCandidates: CandidateDocument[] = []
+) {
   const hasUSTeamMember = selectedCandidates.some(c => c.location === 'United States');
   
-  const groq = new Groq();
-  const completion = await groq.chat.completions.create({
-    messages: [{ 
-      role: 'user', 
-      content: teamAnalysisPrompt + 
-        JSON.stringify(candidate) + 
-        `\nContext: Team currently ${hasUSTeamMember ? 'has' : 'needs'} a US-based member.`
-    }],
-    model: 'mixtral-8x7b-32768',
-    temperature: 0.1,
-  });
-  
-  return completion.choices[0].message.content;
+  try {
+    const response = await axios.post<GroqResponse>(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        model: "mixtral-8x7b-32768",
+        temperature: 0.1,
+        messages: [
+          {
+            role: 'user',
+            content: teamAnalysisPrompt + 
+              JSON.stringify(candidate) + 
+              `\nContext: Team currently ${hasUSTeamMember ? 'has' : 'needs'} a US-based member.`
+          }
+        ]
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        },
+      }
+    );
+
+    return response.data.choices[0]?.message?.content || '';
+  } catch (error) {
+    console.error('Groq API error:', error);
+    return 'Error analyzing candidate';
+  }
 } 
