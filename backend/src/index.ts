@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import Candidate from './models/Candidate';
 import { calculateCandidateScore } from './services/scoring';
 import { CandidateDocument } from './types/candidate';
+import { getLLMAnalysis } from './services/llm';
 
 dotenv.config();
 
@@ -89,6 +90,29 @@ app.post("/api/deselect/:id", async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: "Failed to deselect candidate" });
+  }
+});
+
+app.post('/api/analyze/:id', async (req, res) => {
+  try {
+    const candidate = await Candidate.findById(req.params.id).lean();
+    const { selectedCandidates } = req.body;
+    
+    if (!candidate) {
+      return res.status(404).json({ error: 'Candidate not found' });
+    }
+
+    const analysis = await getLLMAnalysis(candidate, selectedCandidates);
+    
+    // Cache the analysis in the database
+    await Candidate.findByIdAndUpdate(req.params.id, {
+      'scores.llm_analysis': analysis
+    });
+
+    res.json({ analysis });
+  } catch (error) {
+    console.error('Analysis error:', error);
+    res.status(500).json({ error: 'Failed to analyze candidate' });
   }
 });
 
