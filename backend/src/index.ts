@@ -82,6 +82,16 @@ app.post("/api/select/:id", async (req, res) => {
   }
 });
 
+// Deselect a candidate
+app.post("/api/deselect/:id", async (req, res) => {
+  try {
+    await Candidate.findByIdAndUpdate(req.params.id, { selected: false });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to deselect candidate" });
+  }
+});
+
 const PORT = process.env.PORT || 3001;
 
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/mercor')
