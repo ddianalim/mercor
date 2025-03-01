@@ -19,32 +19,51 @@ mongoose.connect(process.env.MONGODB_URI!)
     process.exit(1);
   });
 
-// Basic route
+// Get all candidates with optional filters
 app.get('/api/candidates', async (req, res) => {
   try {
-    const candidates = await Candidate.find({});
+    const { skills, location } = req.query;
+    let query = {};
+    
+    if (skills) {
+      query = { ...query, skills: { $in: [skills].flat() } };
+    }
+    
+    if (location) {
+      query = { ...query, location };
+    }
+    
+    const candidates = await Candidate.find(query);
     res.json(candidates);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch candidates' });
   }
 });
 
-app.post('/api/hire', async (req, res) => {
+// Get selected candidates
+app.get('/api/selected', async (req, res) => {
   try {
-    const { selectedCandidates } = req.body;
-    // Add logic to store selected candidates
-    res.json({ success: true });
+    const selected = await Candidate.find({ selected: true });
+    res.json(selected);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to process hiring' });
+    res.status(500).json({ error: 'Failed to fetch selected candidates' });
   }
 });
 
-app.get('/api/test', async (req, res) => {
+// Select a candidate
+app.post("/api/select/:id", async (req, res) => {
   try {
-    const count = await Candidate.countDocuments();
-    res.json({ count });
+    const selectedCount = await Candidate.countDocuments({ selected: true });
+    if (selectedCount >= 5) {
+      return res
+        .status(400)
+        .json({ error: "Maximum 5 candidates can be selected" });
+    }
+
+    await Candidate.findByIdAndUpdate(req.params.id, { selected: true });
+    res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to count candidates' });
+    res.status(500).json({ error: "Failed to select candidate" });
   }
 });
 

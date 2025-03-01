@@ -43,7 +43,11 @@ const candidateSchema = new mongoose.Schema({
       isTop50: Boolean
     }]
   },
-  skills: [String]
+  skills: [String],
+  selected: {
+    type: Boolean,
+    default: false
+  }
 });
 
 export default mongoose.model('Candidate', candidateSchema);
